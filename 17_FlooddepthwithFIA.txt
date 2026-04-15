@@ -1,0 +1,141 @@
+#FlooddepthwithFIA
+// FLOOD DEPTH + LANDUSE + BUILDINGS + POPULATION ANALYSIS
+// Four Flood Extents: Lokoja GT, Lokoja UResNetMNDWI,
+//                     Gerinya GT, Gerinya UResNetMNDWI
+
+// INPUTS
+
+var FEXT_LKJ_GT   = ee.FeatureCollection('projects/equal902023/assets/FExt_LKJ_GroundTruth');
+var FEXT_LKJ_URES = ee.FeatureCollection('projects/equal902023/assets/FExt_LKJ_UResNetMNDWI');
+
+var FEXT_GRY_GT   = ee.FeatureCollection('projects/equal902023/assets/FExt_GRY_GroundTruth');
+var FEXT_GRY_URES = ee.FeatureCollection('projects/equal902023/assets/FExt_GRY_UResNetMNDWI');
+
+var DEM_LKJ = 'projects/equal902023/assets/ExtrFilledLKJDEM';
+var DEM_GRY = 'projects/equal902023/assets/ExtrFilledGRYDEM';
+
+var LULC  = ee.Image('projects/equal902023/assets/S2_LULC_Timeseries_10m');
+var BUILD = ee.FeatureCollection('projects/equal902023/assets/MS_Buildings');
+var POP   = ee.Image('JRC/GHSL/P2023A/GHS_POP_2023').select('population');
+
+
+// Convert FeatureCollection flood polygons to raster
+
+function fcToRaster(fc) {
+  var tagged = fc.map(function(f) { return f.set('val', 1); });
+  return tagged
+    .reduceToImage(['val'], ee.Reducer.first())
+    .rename('flood')
+    .unmask(0);
+}
+
+
+// Flood depth calculation using FwDET logic
+
+function computeFwDET(floodFC, demAsset) {
+
+  var floodImg = fcToRaster(floodFC);
+  var area = floodFC.geometry().bounds().buffer(1000).bounds();
+
+  var dem = ee.Image(demAsset).select(0).clip(area);
+  var projection = dem.projection();
+  var resolution = projection.nominalScale();
+
+  floodImg = floodImg.reproject(projection);
+
+  var kernel = ee.Kernel.fixed(3, 3, [
+    [1,1,1],
+    [1,1,1],
+    [1,1,1]
+  ]);
+
+  var kernelw = ee.Kernel.fixed(3, 3, [
+    [1,1,1],
+    [1,0,1],
+    [1,1,1]
+  ]);
+
+  var med   = dem.focal_median({kernel: kernel}).reproject(projection);
+  var medW  = dem.focal_median({kernel: kernelw}).reproject(projection);
+  var diff  = dem.subtract(med);
+  var mz    = diff.multiply(0.6745)
+                 .divide(diff.abs().focal_median({kernel: kernel}).reproject(projection));
+
+  var filled = dem.where(mz.gt(3.5), medW);
+
+  var mod = filled.updateMask(floodImg.eq(0));
+  var source = mod.mask();
+  var val = 10000;
+  var push = 5000;
+
+  var cost0 = ee.Image(val).where(source, 0).cumulativeCost(source, push);
+  var cost1 = ee.Image(val).where(source, 1).cumulativeCost(source, push);
+  var cost2 = mod.unmask(val).cumulativeCost(source, push);
+
+  var fillCoeff = cost2.subtract(cost0).divide(cost1.subtract(cost0));
+
+  var surface = mod.unmask(0).add(fillCoeff);
+
+  var boxcar = ee.Kernel.square({radius: 3, units: 'pixels', normalize: true});
+  var depth = surface.subtract(filled)
+                     .rename('depth')
+                     .convolve(boxcar)
+                     .updateMask(floodImg.eq(0));
+
+  depth = depth.where(depth.lt(0), 0);
+
+  return depth;
+}
+
+
+// Impact assessment: landuse, population, buildings
+
+function computeImpacts(depthImg, floodName, area) {
+
+  var depthMask = depthImg.gt(0);
+
+  var lulcAffected = LULC.updateMask(depthMask);
+  var popAffected  = POP.updateMask(depthMask);
+
+  var buildingsAffected = BUILD.filterBounds(area)
+                               .filter(ee.Filter.intersects({
+                                 leftField: '.geo',
+                                 rightValue: depthMask.geometry()
+                               }));
+
+  print('IMPACT SUMMARY:', floodName);
+  print('Buildings affected:', buildingsAffected.size());
+  print('Population sum:', popAffected.reduceRegion({
+      reducer: ee.Reducer.sum(),
+      geometry: area,
+      scale: 30,
+      maxPixels: 1e13
+  }));
+  print('Landcover distribution:', lulcAffected.reduceRegion({
+      reducer: ee.Reducer.frequencyHistogram(),
+      geometry: area,
+      scale: 10,
+      maxPixels: 1e13
+  }));
+
+  Map.addLayer(depthImg, {
+    min: 0,
+    max: 5,
+    palette: ['000080','00FFFF','FFFF00','FF0000']
+  }, floodName + ' Depth');
+}
+
+
+// Run analysis for all four flood conditions
+
+var depth_LKJ_GT = computeFwDET(FEXT_LKJ_GT, DEM_LKJ);
+computeImpacts(depth_LKJ_GT, 'Lokoja Ground Truth', FEXT_LKJ_GT.geometry());
+
+var depth_LKJ_URES = computeFwDET(FEXT_LKJ_URES, DEM_LKJ);
+computeImpacts(depth_LKJ_URES, 'Lokoja UResNetMNDWI', FEXT_LKJ_URES.geometry());
+
+var depth_GRY_GT = computeFwDET(FEXT_GRY_GT, DEM_GRY);
+computeImpacts(depth_GRY_GT, 'Gerinya Ground Truth', FEXT_GRY_GT.geometry());
+
+var depth_GRY_URES = computeFwDET(FEXT_GRY_URES, DEM_GRY);
+computeImpacts(depth_GRY_URES, 'Gerinya UResNetMNDWI', FEXT_GRY_URES.geometry());

@@ -1,5 +1,3 @@
-# DL_MC_MNDWI_Ensemble
-
 # DeepLearningMonteCarloSpectralIndices_Ensemble_FloodMapping
 
 Code repository for my manuscript submission titled:

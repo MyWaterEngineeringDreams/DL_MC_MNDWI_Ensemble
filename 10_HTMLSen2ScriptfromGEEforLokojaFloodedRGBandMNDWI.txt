@@ -1,0 +1,55 @@
+#10_HTMLScriptfromGEEforLokojaFloodedSen2RGBandMNDWI
+
+var aoi = ee.FeatureCollection("projects/equal902023/assets/SmallAreaConfluenceLKJBoundary");
+Map.centerObject(aoi, 10);
+Map.addLayer(aoi, {color: 'red'}, 'AOI boundary');
+
+var dateRanges = [
+  { name: 'LKJFlood', start: '2024-11-7', end: '2024-11-15' }
+];
+
+dateRanges.forEach(function(range) {
+  var coll = ee.ImageCollection("COPERNICUS/S2")
+    .filterBounds(aoi)
+    .filterDate(range.start, range.end)
+    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 10));
+
+  var count = coll.size();
+  print(range.name + ' image count:', count);
+  if (count.eq(0).getInfo()) {
+    print('No S2 L1C images found for', range.name);
+    return;
+  }
+
+  var img = coll.median();
+
+  var rgb = img.select(['B4','B3','B2']);
+  var rgbVis = { min: 0, max: 5000 };
+  Map.addLayer(rgb.clip(aoi), rgbVis, range.name + ' RGB composite');
+
+  var mndwi = img.normalizedDifference(['B3', 'B11']).rename('MNDWI').clip(aoi);
+  Map.addLayer(mndwi, {min: -0.5, max: 0.5, palette: ['brown', 'white', 'blue']}, range.name + ' MNDWI');
+
+  // Export inside the loop!
+  Export.image.toDrive({
+    image: rgb.toFloat(), 
+    description: range.name + '_RGB',
+    folder: 'Sen2FloodDataForLKJCalandVal',
+    fileNamePrefix: range.name + '_RGB',
+    region: aoi.geometry(),
+    scale: 10,
+    maxPixels: 1e13
+  });
+
+  Export.image.toDrive({
+    image: mndwi.toFloat(),
+    description: range.name + '_MNDWI',
+    folder: 'Sen2FloodDataForLKJCalandVal',
+    fileNamePrefix: range.name + '_MNDWI',
+    region: aoi.geometry(),
+    scale: 10,
+    maxPixels: 1e13
+  });
+
+  print('Added layers and submitted exports for', range.name);
+});

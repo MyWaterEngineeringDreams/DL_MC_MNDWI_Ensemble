@@ -1,0 +1,9 @@
+arcpy
+arcgis
+pandas
+geopandas
+rasterio
+numpy
+matplotlib
+seaborn
+
