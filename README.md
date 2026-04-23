@@ -22,7 +22,7 @@ Scripts/
 ├── *.py                  # Executable workflows
 ├── requirements.txt      # Preserved dependency list
 ├── Figs/                 # Figures for analysis and manuscript
-├── GIS Files/            # Raster and vector datasets
+├── GIS Files/            # Request access from authors. The files include Basin boundary shapefiles, annotated SR tiles, Esri model definition emd file, Esri accumulated stats json file, map and stats text files, and raster datasets.
 
 ## Environment
 
